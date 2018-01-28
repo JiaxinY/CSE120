@@ -93,7 +93,7 @@ void noRequestPro(int restCPU) {
         restStride = 100000/restCPU;
     }
     for (int i = 0; i < MAXPROCS; i++) {
-        if (proctab[i].request == 0) {
+        if (proctab[i].valid && proctab[i].request == 0) {
             proctab[i].stride = restStride;
         }
     }
@@ -101,7 +101,7 @@ void noRequestPro(int restCPU) {
 
 void resetPassValue(int min) {
     for (int i = 0; i < MAXPROCS; i++) {
-        if (proctab[i].valid) {
+        if (proctab[i].valid && !(unRequested == 0 && proctab[i].request == 0)) {
             proctab[i].pass -= min;
         }
     }
@@ -133,10 +133,10 @@ void InitSched ()
 	 */
 	if (GetSchedPolicy () == NOSCHEDPOLICY) {	// leave as is
 		//SetSchedPolicy (ROUNDROBIN);		// set policy here
-        //SetSchedPolicy (ARBITRARY);       // set policy here
+        SetSchedPolicy (ARBITRARY);       // set policy here
         //SetSchedPolicy (FIFO);            // set policy here
         //SetSchedPolicy (LIFO);            // set policy here
-        SetSchedPolicy(PROPORTIONAL);
+        //SetSchedPolicy(PROPORTIONAL);
 	}
 		
 	/* Initialize all your data structures here */
@@ -225,41 +225,26 @@ int EndingProc (p)
 	int i;
     int pre;
     
-   // DPrintf("\nEnding Process[%d]...", p);
-   // DPrintf ("\nHead: %d, Tail: %d, current: %d, next: %d\n",head, tail, current);
-
-   // DPrintf ("proctab: ");
-   // for(int j = 0; j < 10; j++)
-     //   DPrintf ("%d  ",proctab[j].valid);
-   // DPrintf("\n");
-    
     if (GetSchedPolicy() == ROUNDROBIN) {
         i = head;
         pre = -1;
         while((i != -1) && !(proctab[i].valid && proctab[i].pid == p)){
             pre = i;
             i = proctab[i].next;
-           // DPrintf("pre: %d, i: %d\n", pre, i);
         }
         if(i!=-1) {
-          //  DPrintf("=========  i != -1, i = %d\n", i);
             proctab[i].valid = 0;
             if(i == head){
-            //    DPrintf("=========  i == head\n");
                 head = proctab[i].next;
                 proctab[i].next = -1;
                 proctab[tail].next = head;
-              //  DPrintf("new head = %d\n", head);
             }
             else if(i == tail) {
-             //   DPrintf("=========  i == tail\n");
                 proctab[pre].next = proctab[tail].next;
                 proctab[tail].next = -1;
                 tail = pre;
-              //  DPrintf("new tail = %d\n", tail);
             }
             else {
-               // DPrintf("=========  i is neither head or tail\n");
                 proctab[pre].next = proctab[i].next;
                 proctab[i].next = -1;
             }
@@ -286,7 +271,6 @@ int EndingProc (p)
             noRequestPro(rest);
         }
         proctab[target].valid = 0;
-        //DPrintf("Ending Process: %d\n", p);
         return(1);
     }
     
@@ -296,12 +280,6 @@ int EndingProc (p)
 			    proctab[i].valid = 0;
                 pop();
                 deQueue();
-         /*       DPrintf ("QueueHead: %d\n",proQueue.head);
-                DPrintf ("new proctab: ");
-                for(int j = 0; j < 10; j++)
-                    DPrintf ("%d ",proQueue.arr[j]);
-                DPrintf("\n");
-*/
                 return (1);	 
             }
         }    
@@ -335,7 +313,6 @@ int SchedProc ()
 		    
 	case FIFO: {
                 i = peek();
-               // DPrintf("Schedule: head: %d tail %d count %d arr: %d i: %d", proQueue.head, proQueue.tail, proQueue.count, proQueue.arr[1], i);
                 if (proctab[i].valid) {
                     return (proctab[i].pid);
                 }
@@ -345,8 +322,6 @@ int SchedProc ()
 	case LIFO: {
 
                 i = top();
-                //DPrintf("Schedule: i: %d, proStack.arr[i]: %d, top: %d\n", i, proStack.arr[i], proStack.arr[proStack.top]);
-
                 if (proctab[i].valid) {
                     return (proctab[i].pid);
                 }
@@ -356,10 +331,7 @@ int SchedProc ()
 	case ROUNDROBIN: {
                     i = current;
                     current = proctab[current].next;
-                    //DPrintf("\nAttempting to schedule another process: i = %d, current = %d...\n", i, current);
-                    //DPrintf("Schedule process %d", i);
                     if (proctab[i].valid) {
-                        //DPrintf("\nScheduled PID: %d\n",proctab[i].pid);
                         return (proctab[i].pid);
                     }
                     break;
@@ -379,9 +351,8 @@ int SchedProc ()
                         }
                     }
                 }
-               // DPrintf("MinIndex: %d\n", minIndex);
                 if (minIndex != 11) {
-                    if (minPass + proctab[minIndex].stride > 1000000) {
+                    if (minPass + proctab[minIndex].stride >= 1000000) {
                         resetPassValue(minPass);
                     }
                     proctab[minIndex].pass += proctab[minIndex].stride;
@@ -433,7 +404,6 @@ int MyRequestCPUrate (p, n)
 	int p;				// process whose rate to change
 	int n;				// percent of CPU time
 {
-	/* your code here */
     if (n>=0 && n <= 100) {
         int targetIndex;
         int noReqPro = 0;
@@ -459,9 +429,9 @@ int MyRequestCPUrate (p, n)
         proctab[targetIndex].request = n;
         if (n == 0) {
             proctab[targetIndex].stride = 0;
-            noReqPro++;
         }        
         else { 
+            noReqPro--;
             proctab[targetIndex].stride = 100000/n;
         }
         if (noReqPro != 0) {
@@ -470,6 +440,7 @@ int MyRequestCPUrate (p, n)
         }
         resetPassValue(currentMinPass);
     }
+    
 	return (0);
 }
 
