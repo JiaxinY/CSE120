@@ -144,6 +144,7 @@ void Main ()
 	MyCreateThread (printSquares, 0);
 
 	for (i = 0; i < NUMYIELDS; i++) {
+        Printf("##Main: currentThread: %d\n", MyGetThread());
 		MyYieldThread (1);
 		Printf ("T0: square = %d\n", square);
 	}
