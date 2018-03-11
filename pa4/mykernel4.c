@@ -10,79 +10,67 @@
 #include "mykernel4.h"
 
 static int MyInitThreadsCalled = 0;	// 1 if MyInitThreads called, else 0
-static int curr;
-static int pre;
+static int curr = 0;
+static int pre = -1;
 static int next;
-static int active;
-static int head;
-static int tail;
+static int active = 0;
+static int threadQueue[MAXTHREADS];
 
 static struct thread {			// thread table
 	int valid;			// 1 if entry is valid, else 0
 	jmp_buf env;			// current context
     jmp_buf base_env;
-    int next;
     void (*func)();
     int param;
 
 } thread[MAXTHREADS];
 
-#define STACKSIZE	65536		// maximum size of thread stack
+#define STACKSIZE	2*65536		// maximum size of thread stack
 
-
-void printMyQueue(){
-    int j = head;
-    while (thread[j].next != -1){
-        DPrintf("Thread: %d, next: %d\n", j, thread[j].next);
-        j = thread[j].next;
-    }
+void PrintQueue(){
+    Printf("Queue: #####\n");
+    for (int i = 0; i < MAXTHREADS; i++)
+        Printf("%d:  %d\n",i,threadQueue[i]);
 }
 
-void EnqueueThread(int t) {
-    thread[tail].next = t;
-    tail = t;
-    //Printf("####Add: %d\n", t);
-    //printMyQueue();
+int FoundThread(int t) {
+    for( int i = 0; i < active; i++){
+        if(threadQueue[i] == t)
+            return i;
+    }
+    return -1;
 }
 
-int DequeueThread(int t) {
-    int p = -1;
-    int c = head;
-    int found = -1;
-    
-    //Printf("****Remove: %d\n ",t);
+void RemoveMyThread(int t) {
+    if (active == 1) 
+        threadQueue[0] = -1;
 
-    if (c == t) {
-        head = thread[head].next;
-        thread[t].next = -1;
-        return t;
+    else {
+        for (int i = FoundThread(t); i < active - 1; i++) 
+            threadQueue[i] = threadQueue[i+1];
+        threadQueue[active - 1] = -1;
     }
-
-    while(c!=tail) {
-        if (c == t) {
-            found = 1;
-            break;
-        }
-        p = c;
-        c = thread[c].next;
-    }
-    if(found == -1 && tail == t) {
-        thread[tail].next = -1;
-        tail = p;
-        return t;
-    }
-
-    if(found) {
-        thread[p].next = thread[c].next;
-        thread[c].next = -1;
-        return c;
-    }   // printMyQueue();
-    return -1; 
+    active--;
 }
 
-int PopThread() {
-    return DequeueThread(head);
+void MoveFrontThread(int t) {
+    if (FoundThread(t) != -1)
+        RemoveMyThread(t);
+
+    for(int i = active; i > 0; i--)
+        threadQueue[i] = threadQueue[i-1];
+    threadQueue[0] = t;
+    active++;
 }
+
+void MoveBackThread(int t) {
+    if (FoundThread(t) != -1)
+        RemoveMyThread(t);
+    threadQueue[active++] = t;
+}
+
+
+
 
 /* 	MyInitThreads () initializes the thread package. Must be the first
  *  	function called by any user program that uses the thread package.  
@@ -99,20 +87,17 @@ void MyInitThreads ()
 
 	for (i = 0; i < MAXTHREADS; i++) {	// initialize thread table
 		thread[i].valid = 0;
-        thread[i].next = -1;
         thread[i].func = NULL;
         thread[i].param = -1;
+        threadQueue[i] = -1;
 	}
 
 	thread[0].valid = 1;			// initialize thread 0
-    curr = 0;
     pre = -1;
-    active = 1;
     next = 1;
-    head = 0;
-    tail = 0;
+    MoveFrontThread(0);
 
-    if (setjmp(thread[0].env) == 0) {
+
         for (i = 0; i < MAXTHREADS; i++) {
             char stack[i*STACKSIZE];
             if (((int) &stack[STACKSIZE-1]) - ((int) &stack[0]) + 1 != STACKSIZE) {
@@ -120,19 +105,13 @@ void MyInitThreads ()
                 Exit ();
             }
 
-            if (setjmp(thread[i].env) != 0) {
+            if (setjmp(thread[i].base_env) != 0) {
                 void (*f)() = thread[MyGetThread()].func;
                 int p = thread[MyGetThread()].param;
                 (*f)(p);
                 MyExitThread();         
             }
-            memcpy(&thread[i].base_env, &thread[i].env, sizeof(thread[i].env));
         }
-    }
-    else {
-        (*thread[0].func)(thread[0].param);
-        MyExitThread();
-    }
 
 	MyInitThreadsCalled = 1;
 }
@@ -159,6 +138,7 @@ int MyCreateThread (f, p)
     int thread_id = -1;
     for (int i = next; i < MAXTHREADS; i++) {	
         if (thread[i].valid == 0) {
+            memcpy(thread[i].env, thread[i].base_env, sizeof(jmp_buf));
             thread_id = i;
             thread[i].valid = 1;
             thread[i].func = f;
@@ -170,6 +150,7 @@ int MyCreateThread (f, p)
     if (thread_id == -1) {
         for(int i = 0; i < next; i++) {
             if (thread[i].valid == 0) {
+                memcpy(thread[i].env, thread[i].base_env, sizeof(jmp_buf));
                 thread_id = i;
                 thread[i].valid = 1;
                 thread[i].func = f;
@@ -178,23 +159,13 @@ int MyCreateThread (f, p)
             }
         }
     }
-    //Printf("Assign Thread: %d\n", thread_id);
     next = thread_id + 1;
     if (next == MAXTHREADS)
         next = 0;
-    active++;
-    //Printf("Active Thread: %d\n", active);
-    //if (setjmp (thread[thread_id].env) == 0) {	// save context of created thread
-    //    longjmp (thread[curr].env, 1);	// back to thread 0
-    //}
 
-    /* here when thread 1 is scheduled for the first time */
+    MoveBackThread(thread_id);
 
-    //(thread[thread_id].func)(thread[thread_id].param);		// execute func (param)
-
-    //MyExitThread ();		// thread 1 is done - exit
-
-	return (thread_id);		// done, return new thread ID
+	return thread_id;		// done, return new thread ID
 }
 
 /*   	MyYieldThread (t) causes the running thread, call it T, to yield to
@@ -206,6 +177,13 @@ int MyCreateThread (f, p)
  * 	will return the value 2.
  */
 
+void PrintMyThread() {
+    Printf("MyThread: #######\n");
+    for (int i = 0; i < MAXTHREADS; i++) {
+        Printf("Thread %d: %d\n", i, thread[i].valid);
+    }
+
+}
 int MyYieldThread (t)
 	int t;				// thread being yielded to
 {
@@ -223,23 +201,18 @@ int MyYieldThread (t)
 		return (-1);
 	}
     
-    int currentThread = MyGetThread();
-    pre = currentThread;
-    //Printf("Current: %d t: %d\n", currentThread,t);
-    if (currentThread == t)
+    int currentThread = threadQueue[0];
+    MoveBackThread(currentThread);
+
+    MoveFrontThread(t);
+    pre = MyGetThread(); 
+    if (pre == t) {
         return t;
-    if (t != head)
-    {
-        EnqueueThread(currentThread);
-        DequeueThread(t);
-    
     }
-    //Printf("currentThread: %d  t: %d\n",currentThread, t);
-        if (setjmp (thread[currentThread].env) == 0) {
+    if (setjmp (thread[pre].env) == 0) {
                 curr = t;
-                longjmp (thread[t].env, 1);
+                longjmp (thread[curr].env, 1);
         }
-    //Printf("curr: %d\n", currentThread);
     return pre;
 }
 
@@ -263,27 +236,22 @@ int MyGetThread ()
 
 void MySchedThread ()
 {
-    int t;
+    int nextThread;
 	if (! MyInitThreadsCalled) {
 		Printf ("MySchedThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
 
-    if (thread[curr].valid) {
-        EnqueueThread(curr);
-        t = thread[curr].next;
-    }
-    else {
-        t = PopThread();
-    }
-    Printf("t: %d\n",t);
-    if (t != -1){
-        if (setjmp (thread[curr].env) == 0) {
-            curr = t;
-            longjmp (thread[curr].env, 1);
-        }
-    }
+    if (active == 0)
+        return;
 
+    nextThread = threadQueue[1];
+
+    if (active == 1)
+        nextThread = threadQueue[0];
+
+    MyYieldThread(nextThread);
+        
 
 }
 
@@ -296,12 +264,14 @@ void MyExitThread ()
 		Printf ("MyExitThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
-    Printf("curr: %d\n", curr);
-    thread[curr].valid = 0;
-    active--;
-    memcpy(thread[curr].env, thread[curr].base_env, sizeof(jmp_buf));
+    int currentThread = MyGetThread();
+
+    thread[currentThread].valid = 0;
+    RemoveMyThread(currentThread);
+    //active--;
+    //memcpy(thread[curr].env, thread[curr].base_env, sizeof(jmp_buf));
     if (active == 0){
         Exit();
     }
-    MySchedThread();
+    MyYieldThread(threadQueue[0]);
 }
