@@ -11,6 +11,7 @@
 
 static int MyInitThreadsCalled = 0;	// 1 if MyInitThreads called, else 0
 static int curr;
+static int pre;
 static int next;
 static int active;
 static int head;
@@ -105,6 +106,7 @@ void MyInitThreads ()
 
 	thread[0].valid = 1;			// initialize thread 0
     curr = 0;
+    pre = -1;
     active = 1;
     next = 1;
     head = 0;
@@ -222,6 +224,7 @@ int MyYieldThread (t)
 	}
     
     int currentThread = MyGetThread();
+    pre = currentThread;
     //Printf("Current: %d t: %d\n", currentThread,t);
     if (currentThread == t)
         return t;
@@ -236,7 +239,8 @@ int MyYieldThread (t)
                 curr = t;
                 longjmp (thread[t].env, 1);
         }
-    return currentThread;
+    //Printf("curr: %d\n", currentThread);
+    return pre;
 }
 
 /*   	MyGetThread () returns ID of currently running thread. 
@@ -259,16 +263,20 @@ int MyGetThread ()
 
 void MySchedThread ()
 {
+    int t;
 	if (! MyInitThreadsCalled) {
 		Printf ("MySchedThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
 
-    if (thread[curr].valid)
+    if (thread[curr].valid) {
         EnqueueThread(curr);
-    
-    int t = PopThread();
-
+        t = thread[curr].next;
+    }
+    else {
+        t = PopThread();
+    }
+    Printf("t: %d\n",t);
     if (t != -1){
         if (setjmp (thread[curr].env) == 0) {
             curr = t;
@@ -288,6 +296,7 @@ void MyExitThread ()
 		Printf ("MyExitThread: Must call MyInitThreads first\n");
 		Exit ();
 	}
+    Printf("curr: %d\n", curr);
     thread[curr].valid = 0;
     active--;
     memcpy(thread[curr].env, thread[curr].base_env, sizeof(jmp_buf));
